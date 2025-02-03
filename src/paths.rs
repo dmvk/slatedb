@@ -1,11 +1,15 @@
+use std::collections::HashMap;
+
 use crate::db_state::SsTableId;
 use crate::db_state::SsTableId::{Compacted, Wal};
 use crate::error::SlateDBError;
 use object_store::path::Path;
 use ulid::Ulid;
 
+#[derive(Clone, Debug)]
 pub(crate) struct PathResolver {
     root_path: Path,
+    external_ssts: HashMap<SsTableId, Path>,
     wal_path: &'static str,
     compacted_path: &'static str,
 }
@@ -14,6 +18,22 @@ impl PathResolver {
     pub(crate) fn new<P: Into<Path>>(root_path: P) -> Self {
         Self {
             root_path: root_path.into(),
+            external_ssts: HashMap::new(),
+            wal_path: "wal",
+            compacted_path: "compacted",
+        }
+    }
+
+    pub(crate) fn new_with_external_ssts<P: Into<Path>>(
+        root_path: P,
+        external_ssts: HashMap<SsTableId, P>,
+    ) -> Self {
+        Self {
+            root_path: root_path.into(),
+            external_ssts: external_ssts
+                .into_iter()
+                .map(|(k, v)| (k, v.into()))
+                .collect(),
             wal_path: "wal",
             compacted_path: "compacted",
         }
@@ -50,14 +70,15 @@ impl PathResolver {
     }
 
     pub(crate) fn table_path(&self, table_id: &SsTableId) -> Path {
+        let root_path = match self.external_ssts.get(table_id) {
+            Some(external_path) => external_path,
+            None => &self.root_path,
+        };
         match table_id {
-            Wal(id) => Path::from(format!(
-                "{}/{}/{:020}.sst",
-                &self.root_path, self.wal_path, id
-            )),
+            Wal(id) => Path::from(format!("{}/{}/{:020}.sst", root_path, self.wal_path, id)),
             Compacted(ulid) => Path::from(format!(
                 "{}/{}/{}.sst",
-                &self.root_path,
+                root_path,
                 self.compacted_path,
                 ulid.to_string()
             )),
