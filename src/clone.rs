@@ -309,15 +309,17 @@ async fn copy_wal_ssts(
 #[cfg(test)]
 mod tests {
     use crate::clone::create_clone;
-    use crate::config::{CheckpointOptions, CheckpointScope};
+    use crate::config::{CheckpointOptions, CheckpointScope, DbOptions};
     use crate::db::Db;
-    use crate::db_state::CoreDbState;
+    use crate::db_state::{CoreDbState, SsTableId};
     use crate::error::SlateDBError;
     use crate::manifest::{Manifest, ParentDb};
     use crate::manifest_store::{ManifestStore, StoredManifest};
+    use crate::paths::PathResolver;
     use crate::proptest_util::{rng, sample};
     use crate::test_utils;
     use fail_parallel::FailPointRegistry;
+    use futures::StreamExt;
     use object_store::memory::InMemory;
     use object_store::path::Path;
     use object_store::ObjectStore;
@@ -667,5 +669,109 @@ mod tests {
         )
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn should_not_leak_wals() -> Result<(), SlateDBError> {
+        let fp_registry = Arc::new(FailPointRegistry::new());
+        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let parent_path = Path::from("/tmp/test_parent");
+        let clone_path = Path::from("/tmp/test_clone");
+
+        let parent_db_opts = DbOptions {
+            compactor_options: None,
+            ..DbOptions::default()
+        };
+        let parent_db =
+            Db::open_with_opts(parent_path.clone(), parent_db_opts, object_store.clone()).await?;
+        parent_db.put("first", "foo").await?;
+        let first_checkpoint = parent_db
+            .create_checkpoint(CheckpointScope::Durable, &CheckpointOptions::default())
+            .await?;
+        parent_db.put("second", "foo").await?;
+        parent_db.put("third", "foo").await?;
+        let second_checkpoint = parent_db
+            .create_checkpoint(CheckpointScope::Durable, &CheckpointOptions::default())
+            .await?;
+        parent_db.close().await?;
+
+        let latest_manifest = ManifestStore::new(&parent_path, object_store.clone())
+            .read_latest_manifest()
+            .await?
+            .1;
+        // todo ... should we have written only 3 wal sst's?
+        assert_eq!(latest_manifest.core.next_wal_sst_id, 5);
+        assert_eq!(latest_manifest.core.last_compacted_wal_sst_id, 0);
+
+        fail_parallel::cfg(
+            fp_registry.clone(),
+            "copy-wal-ssts-io-error",
+            "3*off->return",
+        )
+        .unwrap();
+
+        let err = create_clone(
+            clone_path.clone(),
+            parent_path.clone(),
+            object_store.clone(),
+            Some(second_checkpoint.id),
+            fp_registry.clone(),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, SlateDBError::IoError(_)));
+
+        let path_resolver = PathResolver::new(clone_path.clone());
+
+        let wal_entries = {
+            let mut wal_entries = vec![];
+            let mut list_stream = object_store.list(Some(&clone_path));
+            while let Some(meta) = list_stream.next().await.transpose().unwrap() {
+                if let Some(table_id) = path_resolver.parse_table_id(&meta.location)? {
+                    if matches!(table_id, SsTableId::Wal(_)) {
+                        wal_entries.push(meta);
+                    }
+                }
+            }
+            wal_entries
+        };
+        assert_eq!(wal_entries.len(), 3);
+
+        // Create clone that moves to earlier checkpoint
+        fail_parallel::cfg(fp_registry.clone(), "copy-wal-ssts-io-error", "off").unwrap();
+
+        create_clone(
+            clone_path.clone(),
+            parent_path.clone(),
+            object_store.clone(),
+            Some(first_checkpoint.id),
+            fp_registry,
+        )
+        .await?;
+
+        let latest_clone_manifest = ManifestStore::new(&clone_path, object_store.clone())
+            .read_latest_manifest()
+            .await?
+            .1;
+        assert_eq!(latest_clone_manifest.core.next_wal_sst_id, 3);
+        assert_eq!(latest_clone_manifest.core.last_compacted_wal_sst_id, 0);
+
+        let wal_entries = {
+            let mut wal_entries = vec![];
+            let mut list_stream = object_store.list(Some(&clone_path));
+            while let Some(meta) = list_stream.next().await.transpose().unwrap() {
+                if let Some(table_id) = path_resolver.parse_table_id(&meta.location)? {
+                    if matches!(table_id, SsTableId::Wal(_)) {
+                        wal_entries.push(meta);
+                    }
+                }
+            }
+            wal_entries
+        };
+
+        // !!! THIS IS WRONG, WE HAVE MORE WALS THAN WE SHOULD !!!
+        assert_eq!(wal_entries.len(), 3);
+
+        Ok(())
     }
 }
