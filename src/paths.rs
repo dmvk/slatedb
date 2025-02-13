@@ -6,12 +6,13 @@ use crate::error::SlateDBError;
 use object_store::path::Path;
 use ulid::Ulid;
 
+const WAL_PATH: &str = "wal";
+const COMPACTED_PATH: &str = "compacted";
+
 #[derive(Clone, Debug)]
 pub(crate) struct PathResolver {
     root_path: Path,
     external_ssts: HashMap<SsTableId, Path>,
-    wal_path: &'static str,
-    compacted_path: &'static str,
 }
 
 impl PathResolver {
@@ -19,8 +20,6 @@ impl PathResolver {
         Self {
             root_path: root_path.into(),
             external_ssts: HashMap::new(),
-            wal_path: "wal",
-            compacted_path: "compacted",
         }
     }
 
@@ -34,29 +33,27 @@ impl PathResolver {
                 .into_iter()
                 .map(|(k, v)| (k, v.into()))
                 .collect(),
-            wal_path: "wal",
-            compacted_path: "compacted",
         }
     }
 
     pub(crate) fn wal_path(&self) -> Path {
-        Path::from(format!("{}/{}/", &self.root_path, self.wal_path))
+        Path::from(format!("{}/{}/", &self.root_path, WAL_PATH))
     }
 
     pub(crate) fn compacted_path(&self) -> Path {
-        Path::from(format!("{}/{}/", &self.root_path, self.compacted_path))
+        Path::from(format!("{}/{}/", &self.root_path, COMPACTED_PATH))
     }
 
     pub(crate) fn parse_table_id(&self, path: &Path) -> Result<Option<SsTableId>, SlateDBError> {
         if let Some(mut suffix_iter) = path.prefix_match(&self.root_path) {
             match suffix_iter.next() {
-                Some(a) if a.as_ref() == self.wal_path => suffix_iter
+                Some(a) if a.as_ref() == WAL_PATH => suffix_iter
                     .next()
                     .and_then(|s| s.as_ref().split('.').next().map(|s| s.parse::<u64>()))
                     .transpose()
                     .map(|r| r.map(SsTableId::Wal))
                     .map_err(|_| SlateDBError::InvalidDBState),
-                Some(a) if a.as_ref() == self.compacted_path => suffix_iter
+                Some(a) if a.as_ref() == COMPACTED_PATH => suffix_iter
                     .next()
                     .and_then(|s| s.as_ref().split('.').next().map(Ulid::from_string))
                     .transpose()
@@ -75,11 +72,11 @@ impl PathResolver {
             None => &self.root_path,
         };
         match table_id {
-            Wal(id) => Path::from(format!("{}/{}/{:020}.sst", root_path, self.wal_path, id)),
+            Wal(id) => Path::from(format!("{}/{}/{:020}.sst", root_path, WAL_PATH, id)),
             Compacted(ulid) => Path::from(format!(
                 "{}/{}/{}.sst",
                 root_path,
-                self.compacted_path,
+                COMPACTED_PATH,
                 ulid.to_string()
             )),
         }

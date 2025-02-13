@@ -33,13 +33,11 @@ impl Manifest {
         final_checkpoint_id: Uuid,
         parent_manifest: &Manifest,
     ) -> Self {
-        let mut parent_external_sst_ids = HashSet::new();
+        let mut parent_external_sst_ids = HashSet::<SsTableId>::new();
         let mut clone_external_dbs = vec![];
 
         for parent_external_db in &parent_manifest.external_dbs {
-            parent_external_db.sst_ids.iter().for_each(|id| {
-                parent_external_sst_ids.insert(*id);
-            });
+            parent_external_sst_ids.extend(&parent_external_db.sst_ids);
             clone_external_dbs.push(ExternalDb {
                 path: parent_external_db.path.clone(),
                 source_checkpoint_id: parent_external_db.source_checkpoint_id,
