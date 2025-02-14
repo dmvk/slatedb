@@ -118,7 +118,10 @@ pub(crate) struct StoredManifest {
 }
 
 impl StoredManifest {
-    async fn init(store: Arc<ManifestStore>, manifest: Manifest) -> Result<Self, SlateDBError> {
+    pub(crate) async fn init(
+        store: Arc<ManifestStore>,
+        manifest: Manifest,
+    ) -> Result<Self, SlateDBError> {
         store.write_manifest(1, &manifest).await?;
         Ok(Self {
             id: 1,
@@ -258,6 +261,7 @@ impl StoredManifest {
     pub(crate) async fn update_db_state(&mut self, core: CoreDbState) -> Result<(), SlateDBError> {
         let manifest = Manifest {
             external_dbs: self.manifest.external_dbs.clone(),
+            projections: self.manifest.projections.clone(),
             core,
             writer_epoch: self.manifest.writer_epoch,
             compactor_epoch: self.manifest.compactor_epoch,
