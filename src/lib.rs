@@ -53,6 +53,7 @@ mod clone;
 mod compactor;
 mod compactor_executor;
 mod compactor_state;
+mod comparable_range;
 mod db;
 mod db_common;
 mod db_iter;
