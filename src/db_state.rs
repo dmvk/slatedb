@@ -120,7 +120,7 @@ impl SsTableId {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Default)]
 pub(crate) struct SsTableInfo {
     pub(crate) first_key: Option<Bytes>,
     pub(crate) index_offset: u64,
