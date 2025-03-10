@@ -17,9 +17,9 @@ use uuid::Uuid;
 #[allow(dead_code)]
 #[derive(Clone)]
 pub(crate) struct SourceDatabase<P: Into<Path>> {
-    path: P,
-    checkpoint: Uuid,
-    visible_range: BytesRange,
+    pub(crate) path: P,
+    pub(crate) checkpoint: Uuid,
+    pub(crate) visible_range: BytesRange,
 }
 
 impl<P: Into<Path>> SourceDatabase<P> {
@@ -115,7 +115,7 @@ pub(crate) async fn create_multi_clone<P: Into<Path>>(
         projected_manifests.push(Manifest::projected(&manifest, source.visible_range));
     }
 
-    let merged_manifest = Manifest::merged(projected_manifests);
+    let merged_manifest = Manifest::union(projected_manifests);
     let clone_manifest_store = Arc::new(ManifestStore::new(&clone_path, object_store.clone()));
     StoredManifest::init(clone_manifest_store, merged_manifest).await?;
 

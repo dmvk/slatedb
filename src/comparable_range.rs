@@ -272,6 +272,18 @@ impl<T: Ord + Clone> ComparableRange<T> {
             (_, Bound::Unbounded) => true,
         }
     }
+
+    pub(crate) fn comparable_start_bound(&self) -> StartBound<&T> {
+        StartBound {
+            inner: self.start_bound(),
+        }
+    }
+
+    pub(crate) fn comparable_end_bound(&self) -> EndBound<&T> {
+        EndBound {
+            inner: self.end_bound(),
+        }
+    }
 }
 
 impl<T: Ord + Clone> Clone for ComparableRange<T> {
