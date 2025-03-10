@@ -1459,13 +1459,16 @@ impl Db {
 mod tests {
     use std::collections::BTreeMap;
     use std::collections::Bound::Included;
+    use std::ops::RangeFull;
     use std::sync::atomic::Ordering;
     use std::time::Duration;
 
     use super::*;
     use crate::cached_object_store::FsCacheStorage;
+    use crate::clone::{create_multi_clone, SourceDatabase};
     use crate::config::{
-        CompactorOptions, ObjectStoreCacheOptions, SizeTieredCompactionSchedulerOptions, Ttl,
+        CheckpointOptions, CheckpointScope, CompactorOptions, ObjectStoreCacheOptions,
+        SizeTieredCompactionSchedulerOptions, Ttl,
     };
     use crate::merge_operator::AppendingMergeOperator;
     use crate::proptest_util::arbitrary;
@@ -3606,5 +3609,90 @@ mod tests {
             default_ttl: ttl,
             merge_operator: None,
         }
+    }
+
+    #[cfg(feature = "wal_disable")]
+    #[tokio::test]
+    async fn test_create_multi_clone() -> Result<(), Box<dyn std::error::Error>> {
+        // Define prefixes for different key ranges
+        let ranges = vec!["a".."e", "e".."i", "i".."m"];
+        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        // Disable WAL since it's unsupported for multi_clone
+        let options = DbOptions {
+            wal_enabled: false,
+            ..DbOptions::default()
+        };
+
+        let mut source_paths = vec![];
+        let mut checkpoints = vec![];
+
+        for (idx, _) in ranges.iter().enumerate() {
+            let path = Path::from(format!("/tmp/test_source{}", idx + 1));
+            let db = Db::open_with_opts(path.clone(), options.clone(), object_store.clone())
+                .await
+                .unwrap();
+
+            source_paths.push(path.clone());
+
+            for key in 'a'..='z' {
+                for suffix in 0..10 {
+                    let key = format!("{}#{}", key, suffix);
+                    let value = format!("{}@{}", key, idx);
+                    db.put_with_options(
+                        &key,
+                        &value,
+                        &PutOptions::default(),
+                        &WriteOptions {
+                            await_durable: false,
+                        },
+                    )
+                    .await?;
+                }
+            }
+
+            let checkpoint = db
+                .create_checkpoint(
+                    CheckpointScope::All { force_flush: true },
+                    &CheckpointOptions::default(),
+                )
+                .await?;
+            checkpoints.push(checkpoint.id);
+
+            db.close().await?;
+        }
+
+        let clone_path = Path::from("/tmp/test_multi_clone");
+
+        // Define source databases for multi-clone with specific visible ranges
+        let sources: Vec<SourceDatabase<Path>> = source_paths
+            .iter()
+            .zip(ranges.iter())
+            .zip(checkpoints.iter())
+            .map(|((path, range), checkpoint)| SourceDatabase {
+                path: path.clone(),
+                visible_range: BytesRange::new(
+                    range.start_bound().map(|b| Bytes::from(*b)),
+                    range.end_bound().map(|b| Bytes::from(*b)),
+                ),
+                checkpoint: *checkpoint,
+            })
+            .collect();
+
+        // Create multi-clone from the sources
+        create_multi_clone(clone_path.clone(), sources, object_store.clone()).await?;
+
+        // Open the cloned database and verify it contains all the expected data
+        let clone_db =
+            Db::open_with_opts(clone_path.clone(), options, object_store.clone()).await?;
+
+        let mut iter = clone_db.scan::<Vec<u8>, RangeFull>(..).await?;
+
+        while let Some(kv) = iter.next().await? {
+            println!("{:?}", kv);
+        }
+
+        clone_db.close().await?;
+
+        Ok(())
     }
 }
