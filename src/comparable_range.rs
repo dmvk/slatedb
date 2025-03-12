@@ -19,6 +19,14 @@ impl<T: Ord + Clone> Clone for StartBound<T> {
     }
 }
 
+impl<T: Ord + Clone> StartBound<&T> {
+    pub fn cloned(self) -> StartBound<T> {
+        StartBound {
+            inner: self.inner.cloned(),
+        }
+    }
+}
+
 impl<T: Ord + Serialize> Serialize for StartBound<T> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -119,6 +127,14 @@ impl<T: Ord> PartialOrd for EndBound<T> {
 impl<T: Ord> Ord for EndBound<T> {
     fn cmp(&self, other: &Self) -> Ordering {
         cmp_bound(&self.inner, &other.inner, false)
+    }
+}
+
+impl<T: Ord + Clone> EndBound<&T> {
+    pub fn cloned(self) -> EndBound<T> {
+        EndBound {
+            inner: self.inner.cloned(),
+        }
     }
 }
 
