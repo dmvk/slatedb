@@ -889,6 +889,7 @@ impl Db {
     /// }
     /// ```
     pub async fn close(&self) -> Result<(), SlateDBError> {
+        tracing::info!("Closing database");
         if let Some(compactor) = {
             let mut maybe_compactor = self.compactor.lock();
             maybe_compactor.take()

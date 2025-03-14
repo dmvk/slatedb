@@ -19,6 +19,8 @@ use std::sync::Arc;
 use tokio::runtime::Handle;
 use uuid::Uuid;
 
+pub use crate::clone::SourceDatabase;
+
 /// read-only access to the latest manifest file
 pub async fn read_manifest(
     path: &Path,
@@ -312,6 +314,15 @@ pub async fn create_clone<P: Into<Path>>(
         Arc::new(FailPointRegistry::new()),
     )
     .await?;
+    Ok(())
+}
+
+pub async fn create_multi_clone<P: Into<Path>>(
+    object_store: Arc<dyn ObjectStore>,
+    clone_path: P,
+    sources: Vec<SourceDatabase<P>>,
+) -> Result<(), SlateDBError> {
+    clone::create_multi_clone(clone_path, sources, object_store).await?;
     Ok(())
 }
 

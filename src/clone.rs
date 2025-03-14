@@ -10,19 +10,32 @@ use crate::paths::PathResolver;
 use fail_parallel::{fail_point, FailPointRegistry};
 use object_store::path::Path;
 use object_store::ObjectStore;
+use std::ops::RangeBounds;
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
 
 #[allow(dead_code)]
 #[derive(Clone)]
-pub(crate) struct SourceDatabase<P: Into<Path>> {
+pub struct SourceDatabase<P: Into<Path>> {
     pub(crate) path: P,
     pub(crate) checkpoint: Uuid,
     pub(crate) visible_range: BytesRange,
 }
 
 impl<P: Into<Path>> SourceDatabase<P> {
+    pub fn new<K, T>(path: P, checkpoint: Uuid, visible_range: T) -> SourceDatabase<P>
+    where
+        K: AsRef<[u8]>,
+        T: RangeBounds<K>,
+    {
+        SourceDatabase {
+            path,
+            checkpoint,
+            visible_range: BytesRange::from_ref(visible_range),
+        }
+    }
+
     fn into_path(self) -> SourceDatabase<Path> {
         SourceDatabase {
             path: self.path.into(),

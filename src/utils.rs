@@ -111,11 +111,12 @@ where
 {
     let monitored_name = String::from(name);
     let monitor_name = format!("{}-monitor", name);
+    tracing::info!("Spawning background thread {name}");
     std::thread::Builder::new()
         .name(monitor_name)
         .spawn(move || {
             let inner = std::thread::Builder::new()
-                .name(monitored_name)
+                .name(monitored_name.clone())
                 .spawn(f)
                 .expect("failed to create monitored thread");
             let result = inner.join();
@@ -124,10 +125,12 @@ where
                     // the thread panic'd
                     let err = Err(BackgroundTaskPanic(Arc::new(Mutex::new(err))));
                     cleanup_fn(&err);
+                    tracing::info!("Background thread {monitored_name} completed with error");
                     err
                 }
                 Ok(result) => {
                     cleanup_fn(&result);
+                    tracing::info!("Background thread {monitored_name} completed");
                     result
                 }
             }
