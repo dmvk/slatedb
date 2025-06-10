@@ -503,11 +503,78 @@ mod tests {
 
     const PATH: &str = "/test/db";
 
+    #[cfg(feature = "wal_disable")]
+    #[tokio::test]
+    async fn test_compactor_deletes() -> Result<(), SlateDBError> {
+        // given:
+        let os = Arc::new(InMemory::new());
+
+        let compaction_scheduler = Arc::new(SizeTieredCompactionSchedulerSupplier::new(
+            SizeTieredCompactionSchedulerOptions {
+                min_compaction_sources: 1,
+                max_compaction_sources: 999,
+                include_size_threshold: 4.0,
+            },
+        ));
+
+        let mut options = db_options(Some(compactor_options()));
+        // options.l0_sst_size_bytes = 128;
+        options.wal_enabled = false;
+
+        let db = Db::builder(PATH, os.clone())
+            .with_settings(options)
+            .with_compaction_scheduler_supplier(compaction_scheduler)
+            .build()
+            .await?;
+
+        for i in 0..32 {
+            let k = vec![b'a' + i as u8; 16];
+            db.put_with_options(
+                &k,
+                &[b'a'; 32],
+                &PutOptions::default(),
+                &WriteOptions {
+                    await_durable: false,
+                },
+            )
+            .await?;
+        }
+        db.flush().await?;
+
+        for i in 0..32 {
+            let k = vec![b'a' + i as u8; 16];
+            db.delete_with_options(
+                &k,
+                &WriteOptions {
+                    await_durable: false,
+                },
+            )
+            .await?;
+        }
+        db.flush().await?;
+
+        let manifest_store = Arc::new(ManifestStore::new(&Path::from(PATH), os.clone()));
+
+        // when:
+        let db_state = await_compaction(&db, manifest_store).await;
+
+        // then:
+        let db_state = db_state.expect("db was not compacted");
+
+        assert_eq!(db_state.l0.len(), 0);
+
+        for run in &db_state.compacted {
+            assert_eq!(run.ssts.len(), 0);
+        }
+
+        Ok(())
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_compactor_compacts_l0() {
         // given:
         let os = Arc::new(InMemory::new());
-        let logical_clock = Arc::new(TestClock::new());
+        let logical_clock: Arc<TestClock> = Arc::new(TestClock::new());
         let compaction_scheduler = Arc::new(SizeTieredCompactionSchedulerSupplier::new(
             SizeTieredCompactionSchedulerOptions {
                 min_compaction_sources: 1,
